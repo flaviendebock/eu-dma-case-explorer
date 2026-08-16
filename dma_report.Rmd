@@ -1,0 +1,216 @@
+---
+title: "DMA Case Data: Visual Overview"
+subtitle: "European Commission Digital Markets Act enforcement cases"
+date: "`r format(Sys.Date(), '%Y %m %d')`"
+output:
+  pdf_document:
+    toc: true
+    number_sections: false
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center", 
+  fig.width=6, fig.height=4, out.width="80%"
+)
+
+library(tidyverse)
+library(scales)
+
+theme_set(
+  theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(color = "grey40"),
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      # Anchor title and subtitle to the full figure width rather than just
+      # the panel. Without this, long axis labels shrink the panel and the
+      # title text overflows past the right edge of the image and gets cut.
+      plot.title.position = "plot",
+      plot.caption.position = "plot",
+      plot.margin = margin(10, 14, 10, 10)
+    )
+)
+
+# Wrap long y axis labels so the panel keeps a reasonable width and the
+# bars are not squeezed into a thin strip on the right of the figure.
+wrap_labels <- function(x, width = 38) str_wrap(x, width = width)
+
+cases     <- read_csv("cases_clean.csv", show_col_types = FALSE)
+decisions <- read_csv("decisions_clean.csv", show_col_types = FALSE)
+
+normalize_company <- function(x) {
+  case_when(
+    is.na(x)                             ~ NA_character_,
+    str_detect(x, "Alphabet")            ~ "Alphabet",
+    str_detect(x, "Apple")               ~ "Apple",
+    str_detect(x, "MICROSOFT|Microsoft") ~ "Microsoft",
+    str_detect(x, "Meta")                ~ "Meta",
+    str_detect(x, "[Aa]mazon")           ~ "Amazon",
+    str_detect(x, "Booking")             ~ "Booking",
+    str_detect(x, "[Bb]yte[Dd]ance")     ~ "ByteDance",
+    str_detect(x, "X Holdings")          ~ "X (Twitter)",
+    str_detect(x, "Samsung")             ~ "Samsung",
+    TRUE                                 ~ x
+  )
+}
+
+cases <- cases %>% mutate(company_clean = normalize_company(companies))
+
+decisions <- decisions %>%
+  left_join(cases %>% select(case_number, company_clean), by = "case_number")
+```
+
+# Introduction
+
+This report walks through a set of visualizations built from the cleaned Digital Markets Act case data published by the European Commission. The underlying tables come from `cases_clean.csv` and `decisions_clean.csv`, produced by an earlier cleaning step that unpacked the raw nested JSON export into tidy, linked tables.
+
+# Decisions Per Year
+
+The chart below splits every adopted decision into two buckets. Procedural decisions cover designation steps, rebuttals, and the opening of proceedings or market investigations. Substantive decisions cover actual enforcement outcomes such as Article 8 decisions, non compliance decisions, and closures.
+
+```{r decisions-per-year, fig.width=8, fig.height=5}
+procedural_types <- c(
+  "Designation decision",
+  "Decision accepting rebuttal",
+  "Decision to open proceedings based on Art.20 and Art.29",
+  "Decision to open a market investigation based on Art.3(5) and Art.17(3)",
+  "Decision to open a market investigation based on Art.3(8) and Art.17(1)",
+  "Decision to open proceedings based on Art.8(2)",
+  "Decision to extend time limits based on Art.7(6)",
+  "Decision to open a market investigation into new services and new practices",
+  "Decision under waiver clause",
+  "Review of designation decision based on Art.4",
+  "Preliminary findings based on Art.8(5)"
+)
+
+decisions_by_year <- decisions %>%
+  filter(!is.na(decision_adoption_date)) %>%
+  mutate(
+    year = year(decision_adoption_date),
+    category = if_else(decision_type_label %in% procedural_types, "Procedural", "Substantive")
+  ) %>%
+  count(year, category)
+
+p1 <- ggplot(decisions_by_year, aes(x = factor(year), y = n, fill = category)) +
+  geom_col() +
+  scale_fill_manual(values = c("Procedural" = "#9DB4C0", "Substantive" = "#C1666B")) +
+  labs(
+    title = "DMA decisions per year",
+    subtitle = "Split between procedural steps and substantive enforcement outcomes",
+    x = NULL, y = "Number of decisions", fill = NULL
+  )
+p1
+```
+
+The volume of decisions was highest in 2023 and 2024, when the Commission was mainly working through designation and rebuttal steps. Substantive enforcement only starts to appear in the 2025 and 2026 figures, which suggests the regime is now shifting from setup into actual enforcement.
+
+# Cases Still Open With Zero Decisions
+
+Some cases have been initiated but have not yet produced a single decision. The chart ranks these by how long they have been open.
+
+```{r stuck-cases, fig.width=8, fig.height=4.5}
+today_ref <- Sys.Date()
+
+stuck_cases <- cases %>%
+  filter(n_decisions == 0, !is.na(case_initiation_date)) %>%
+  mutate(
+    days_open = as.numeric(today_ref - case_initiation_date),
+    label = str_c(company_clean, " (", case_number, ")")
+  ) %>%
+  arrange(days_open)
+
+p2 <- ggplot(stuck_cases, aes(x = days_open, y = fct_reorder(label, days_open))) +
+  geom_segment(aes(x = 0, xend = days_open, yend = label), color = "grey70") +
+  geom_point(size = 3, color = "#C1666B") +
+  labs(
+    title = "Cases open with zero decisions so far",
+    subtitle = str_c("Days since case initiation, as of ", format(today_ref, "%Y-%m-%d")),
+    x = "Days open", y = NULL
+  )
+p2
+```
+
+Most of these cases were opened close to the original 2023 rollout of the DMA and have remained without a decision for roughly a thousand days. Booking is the one exception, having been opened considerably more recently.
+
+# Obligations Most Frequently At Stake
+
+Roughly a third of cases have an identified obligation article attached to them. The remaining cases sit at the designation stage and do not yet carry an obligation label. The chart below only includes cases where an obligation is known.
+
+```{r obligations, fig.width=8, fig.height=6}
+obligation_counts <- cases %>%
+  filter(!is.na(concerned_obligation_label)) %>%
+  count(concerned_obligation_label, sort = TRUE)
+
+p3 <- ggplot(obligation_counts, aes(x = n, y = fct_reorder(wrap_labels(concerned_obligation_label), n))) +
+  geom_col(fill = "#5B8291") +
+  labs(
+    title = "Which DMA obligations show up most in cases",
+    subtitle = "Cases with an identified obligation article only (36 of 55 cases have none yet)",
+    x = "Number of cases", y = NULL
+  )
+p3
+```
+
+Article 11, which covers compliance measures, and Article 5(2), which covers personal data processing, are the two obligations that appear most often. Interoperability and self preferencing, which tend to draw more public attention, appear less frequently by comparison.
+
+# Case Volume By Company
+
+Company names in the raw data include several near duplicates, for example different punctuation for the same Amazon entity, or the two Apple entities listed in a different order across cases. These have been normalized into one canonical name per company before counting.
+
+```{r cases-by-company, fig.width=7, fig.height=4.5}
+p4 <- cases %>%
+  filter(!is.na(company_clean)) %>%
+  count(company_clean, sort = TRUE) %>%
+  ggplot(aes(x = n, y = fct_reorder(company_clean, n))) +
+  geom_col(fill = "#5B8291") +
+  labs(
+    title = "DMA cases by company",
+    x = "Number of cases", y = NULL
+  )
+p4
+```
+
+Alphabet carries the largest number of cases, followed by Apple and Microsoft. This lines up with Alphabet also being the company with the widest spread of decision types, discussed later in this report.
+
+# Case Volume By Core Platform Service
+
+```{r cases-by-service, fig.width=8, fig.height=4.5}
+p5 <- cases %>%
+  filter(!is.na(core_platform_service_label)) %>%
+  count(core_platform_service_label, sort = TRUE) %>%
+  ggplot(aes(x = n, y = fct_reorder(core_platform_service_label, n))) +
+  geom_col(fill = "#9DB4C0") +
+  labs(
+    title = "DMA cases by core platform service",
+    x = "Number of cases", y = NULL
+  )
+p5
+```
+
+Online intermediation services and online advertising services draw the most cases, which is consistent with these being the core business lines of several of the largest designated gatekeepers. Cloud computing services appear in only a handful of cases despite being a growing part of the platform economy.
+
+# Decision Type Mix
+
+```{r decision-types, fig.width=9, fig.height=6.5}
+p6 <- decisions %>%
+  count(decision_type_label, sort = TRUE) %>%
+  ggplot(aes(x = n, y = fct_reorder(wrap_labels(decision_type_label), n))) +
+  geom_col(fill = "#C1666B") +
+  labs(
+    title = "Decision types across all DMA cases",
+    x = "Number of decisions", y = NULL
+  )
+p6
+```
+
+Designation decisions and decisions accepting a rebuttal together make up the majority of all decisions issued so far. Genuine enforcement outcomes such as Article 8 decisions or non compliance decisions remain a much smaller share of the total.
+
+# Closing Note
+
+Taken together, these charts point to a regime that spent its first two years mostly on procedural setup, designating gatekeepers and processing their rebuttals, and is only now moving into substantive enforcement. Alphabet stands out both in case volume and in the breadth of decision types it has accumulated, while several major cases across Apple, Microsoft, Meta, Amazon, ByteDance, and Alphabet itself remain open without any decision at all.
