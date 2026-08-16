@@ -81,6 +81,6 @@ Company names in the raw export are inconsistent, for example different punctuat
 
 About a third of cases have no obligation article attached yet, since they are still at the designation stage rather than tied to a specific compliance investigation.
 
-## License
+## Source
 
-Add a license of your choice here. The underlying case data belongs to the European Commission; check the [source dataset page](https://data.europa.eu/data/datasets/72358eb1-37aa-40bb-8047-d87154d57ac1) for its terms of reuse.
+The underlying case data belongs to the European Commission; check the [source dataset page](https://data.europa.eu/data/datasets/72358eb1-37aa-40bb-8047-d87154d57ac1).
